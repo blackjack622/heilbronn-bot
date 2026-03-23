@@ -1,3 +1,4 @@
+import os
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -5,10 +6,10 @@ from pathlib import Path
 import requests
 
 # =========================
-# BURAYI DOLDUR
+# GITHUB SECRETS
 # =========================
-TOKEN = "8677644764:AAHijkweDAV22MyQejQk5JoEJGAidGcP-Jw"
-CHAT_ID = "618746044"
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 SERVICE_ID = 144511
 DAYS_TO_SCAN = 270
@@ -24,7 +25,7 @@ HEADERS = {
 }
 
 
-def send_message(text: str):
+def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
     response = requests.post(
@@ -38,7 +39,6 @@ def send_message(text: str):
     )
 
     print("Telegram cevabı:", response.text)
-    response.raise_for_status()
 
 
 def load_state():
@@ -54,7 +54,7 @@ def save_state(state):
     )
 
 
-def fetch_timeslots_for_date(date_str: str):
+def fetch_timeslots_for_date(date_str):
     params = {
         "date": date_str,
         "serviceid": str(SERVICE_ID),
@@ -84,7 +84,7 @@ def fetch_timeslots_for_date(date_str: str):
         )
 
         if response.status_code != 200:
-            print(f"{date_str} için uygun veri yok. HTTP {response.status_code}")
+            print(f"{date_str} → veri yok (HTTP {response.status_code})")
             return []
 
         data = response.json()
@@ -95,7 +95,7 @@ def fetch_timeslots_for_date(date_str: str):
         return data
 
     except Exception as e:
-        print(f"Hata (date={date_str}): {e}")
+        print(f"Hata ({date_str}): {e}")
         return []
 
 
@@ -103,80 +103,75 @@ def extract_earliest_slot(slots):
     if not slots:
         return None
 
-    starts = []
+    times = []
 
     for slot in slots:
         start = slot.get("start")
-        if not start:
-            continue
+        if start:
+            try:
+                times.append(datetime.fromisoformat(start))
+            except:
+                pass
 
-        try:
-            starts.append(datetime.fromisoformat(start))
-        except Exception:
-            pass
-
-    if not starts:
+    if not times:
         return None
 
-    return min(starts)
+    return min(times)
 
 
 def find_earliest_appointment():
     today = datetime.now().date()
 
     for i in range(DAYS_TO_SCAN + 1):
-        current_date = today + timedelta(days=i)
-        date_str = current_date.isoformat()
+        date = today + timedelta(days=i)
+        date_str = date.isoformat()
 
         print(f"Kontrol ediliyor: {date_str}")
 
         slots = fetch_timeslots_for_date(date_str)
+
         if not slots:
             continue
 
         earliest = extract_earliest_slot(slots)
-        if earliest is not None:
-            return earliest, slots
 
-    return None, []
+        if earliest:
+            return earliest
+
+    return None
 
 
 def main():
     state = load_state()
 
-    earliest, slots = find_earliest_appointment()
+    earliest = find_earliest_appointment()
 
     if earliest is None:
         print("Hiç randevu bulunamadı.")
         return
 
-    print("Bulunan en erken randevu:", earliest.isoformat())
+    print("En erken randevu:", earliest)
 
-    earliest_iso = earliest.isoformat()
-    last_notified = state.get("last_notified_earliest")
+    last = state.get("last_notified_earliest")
 
-    if last_notified is None:
+    if last is None:
         send_message(
-            "İlk bulunan en erken randevu:\n"
-            f"{earliest.strftime('%d.%m.%Y %H:%M')}\n"
-            f"{REFERER}"
+            f"İlk bulunan randevu:\n{earliest.strftime('%d.%m.%Y %H:%M')}\n{REFERER}"
         )
-        state["last_notified_earliest"] = earliest_iso
+        state["last_notified_earliest"] = earliest.isoformat()
         save_state(state)
         return
 
-    last_dt = datetime.fromisoformat(last_notified)
+    last_dt = datetime.fromisoformat(last)
 
     if earliest < last_dt:
         send_message(
-            "Daha erken randevu bulundu!\n"
-            f"{earliest.strftime('%d.%m.%Y %H:%M')}\n"
-            f"{REFERER}"
+            f"DAHA ERKEN RANDEVU!\n{earliest.strftime('%d.%m.%Y %H:%M')}\n{REFERER}"
         )
-        state["last_notified_earliest"] = earliest_iso
+        state["last_notified_earliest"] = earliest.isoformat()
         save_state(state)
     else:
-        print("Daha erken randevu yok.")
+        print("Yeni erken randevu yok.")
 
 
 if __name__ == "__main__":
