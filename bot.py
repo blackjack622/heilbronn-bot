@@ -1,20 +1,14 @@
 import os
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import requests
 
-# =========================
-# GITHUB SECRETS
-# =========================
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 SERVICE_ID = 144511
 DAYS_TO_SCAN = 270
 
-STATE_FILE = Path("state.json")
 BASE_URL = "https://www.etermin.net/api/timeslots"
 REFERER = "https://www.etermin.net/qtermin-stadtheilbronn-abh"
 
@@ -25,9 +19,8 @@ HEADERS = {
 }
 
 
-def send_message(text):
+def send_message(text: str):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
     response = requests.post(
         url,
         json={
@@ -37,24 +30,11 @@ def send_message(text):
         },
         timeout=30,
     )
-
     print("Telegram cevabı:", response.text)
+    response.raise_for_status()
 
 
-def load_state():
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return {"last_notified_earliest": None}
-
-
-def save_state(state):
-    STATE_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def fetch_timeslots_for_date(date_str):
+def fetch_timeslots_for_date(date_str: str):
     params = {
         "date": date_str,
         "serviceid": str(SERVICE_ID),
@@ -88,7 +68,6 @@ def fetch_timeslots_for_date(date_str):
             return []
 
         data = response.json()
-
         if not isinstance(data, list):
             return []
 
@@ -104,13 +83,12 @@ def extract_earliest_slot(slots):
         return None
 
     times = []
-
     for slot in slots:
         start = slot.get("start")
         if start:
             try:
                 times.append(datetime.fromisoformat(start))
-            except:
+            except Exception:
                 pass
 
     if not times:
@@ -123,18 +101,16 @@ def find_earliest_appointment():
     today = datetime.now().date()
 
     for i in range(DAYS_TO_SCAN + 1):
-        date = today + timedelta(days=i)
-        date_str = date.isoformat()
+        date_obj = today + timedelta(days=i)
+        date_str = date_obj.isoformat()
 
         print(f"Kontrol ediliyor: {date_str}")
-
         slots = fetch_timeslots_for_date(date_str)
 
         if not slots:
             continue
 
         earliest = extract_earliest_slot(slots)
-
         if earliest:
             return earliest
 
@@ -142,36 +118,17 @@ def find_earliest_appointment():
 
 
 def main():
-    state = load_state()
-
     earliest = find_earliest_appointment()
 
     if earliest is None:
-        print("Hiç randevu bulunamadı.")
+        send_message("Şu anda uygun randevu bulunamadı.")
         return
 
-    print("En erken randevu:", earliest)
-
-    last = state.get("last_notified_earliest")
-
-    if last is None:
-        send_message(
-            f"İlk bulunan randevu:\n{earliest.strftime('%d.%m.%Y %H:%M')}\n{REFERER}"
-        )
-        state["last_notified_earliest"] = earliest.isoformat()
-        save_state(state)
-        return
-
-    last_dt = datetime.fromisoformat(last)
-
-    if earliest < last_dt:
-        send_message(
-            f"DAHA ERKEN RANDEVU!\n{earliest.strftime('%d.%m.%Y %H:%M')}\n{REFERER}"
-        )
-        state["last_notified_earliest"] = earliest.isoformat()
-        save_state(state)
-    else:
-        print("Yeni erken randevu yok.")
+    send_message(
+        "En erken randevu:\n"
+        f"{earliest.strftime('%d.%m.%Y %H:%M')}\n"
+        f"{REFERER}"
+    )
 
 
 if __name__ == "__main__":
